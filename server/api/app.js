@@ -14,7 +14,7 @@ app.use(requestLogger);
 app.use("/api", apiLimiter);
 app.use(
   fileUpload({
-    limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+    limits: { fileSize: 50 * 1024 * 1024 },
     useTempFiles: true,
     tempFileDir: "/tmp/",
     debug: true,
@@ -26,10 +26,6 @@ app.use(
   })
 );
 
-// Routes
-const router = express.Router();
-app.use("/api", router);
-
 // Import route handlers
 const usersRoute = require("./routes/usersRoute");
 const teamsRoute = require("./routes/teamsRoute");
@@ -37,40 +33,28 @@ const tasksRoute = require("./routes/tasksRoute");
 const taskCommentsRoute = require("./routes/taskCommentsRoute");
 const filesRoute = require("./routes/filesRoute");
 
+// Create router instance
+const router = express.Router();
+
 // Apply auth rate limiting to login/register routes
 router.use("/users/login", authLimiter);
 router.use("/users/register", authLimiter);
-
-// Apply route-specific validation
-router.post("/tasks", validateTask);
-router.post("/tasks/:taskId/comments", validateComment);
 
 // Mount routes
 router.use("/users", usersRoute);
 router.use("/teams", teamsRoute);
 router.use("/tasks", tasksRoute);
-router.use("/", taskCommentsRoute);
+router.use("/tasks", taskCommentsRoute);
 router.use("/files", filesRoute);
+
+// Mount router to app
+app.use("/api", router);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
   console.error("Error:", err.stack);
-
-  if (err.name === "ValidationError") {
-    return res.status(400).json({
-      error: err.message,
-    });
-  }
-
-  if (err.name === "UnauthorizedError") {
-    return res.status(401).json({
-      error: "Invalid or expired token",
-    });
-  }
-
   res.status(err.status || 500).json({
     error: err.message || "Something went wrong!",
-    ...(process.env.NODE_ENV === "development" && { stack: err.stack }),
   });
 });
 

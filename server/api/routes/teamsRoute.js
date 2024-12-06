@@ -6,6 +6,7 @@ const {
   addTeamMember,
   getTeamMembers,
   removeTeamMember,
+  getTeam,
 } = require("../controllers/teamsController");
 const { authenticateToken } = require("../middleware/auth");
 
@@ -26,5 +27,8 @@ router.get("/:teamId/members", getTeamMembers);
 
 // Remove member from team
 router.delete("/:teamId/members/:memberId", removeTeamMember);
+
+// Get team details
+router.get("/:teamId", getTeam);
 
 module.exports = router;

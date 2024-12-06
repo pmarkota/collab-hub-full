@@ -1,9 +1,12 @@
-import { useEffect, useCallback } from "react";
+import { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
+import MainLayout from "./components/layout/MainLayout";
 import Login from "./components/Login";
 import Register from "./components/Register";
 import Dashboard from "./components/Dashboard";
+import TeamList from "./components/teams/TeamList";
+import TeamDetailsPage from "./pages/TeamDetailsPage";
 import PrivateRoute from "./components/PrivateRoute";
 import { getToken } from "./utils/auth";
 import { initializeSocket, disconnectSocket } from "./utils/socket";
@@ -40,10 +43,16 @@ const App = () => {
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
         <Route
-          path="/dashboard/*"
+          path="/*"
           element={
             <PrivateRoute>
-              <Dashboard />
+              <MainLayout>
+                <Routes>
+                  <Route path="/dashboard" element={<Dashboard />} />
+                  <Route path="/teams" element={<TeamList />} />
+                  <Route path="/teams/:teamId" element={<TeamDetailsPage />} />
+                </Routes>
+              </MainLayout>
             </PrivateRoute>
           }
         />

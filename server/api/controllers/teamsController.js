@@ -375,10 +375,68 @@ const removeTeamMember = async (req, res) => {
   }
 };
 
+// Add this function to teamsController.js
+const getTeam = async (req, res) => {
+  try {
+    const { teamId } = req.params;
+    const userId = req.user.id;
+
+    // Check if user is team member
+    const { data: memberCheck } = await supabase
+      .from("team_members")
+      .select("role")
+      .eq("team_id", teamId)
+      .eq("user_id", userId)
+      .single();
+
+    if (!memberCheck) {
+      return res.status(403).json({
+        error: "Access denied",
+      });
+    }
+
+    // Get team details
+    const { data: team, error } = await supabase
+      .from("teams")
+      .select(
+        `
+        *,
+        members:team_members(count),
+        tasks:tasks(count)
+      `
+      )
+      .eq("id", teamId)
+      .single();
+
+    if (error) throw error;
+
+    if (!team) {
+      return res.status(404).json({
+        error: "Team not found",
+      });
+    }
+
+    res.json({
+      data: {
+        ...team,
+        memberCount: team.members[0].count,
+        taskCount: team.tasks[0].count,
+        userRole: memberCheck.role,
+      },
+    });
+  } catch (error) {
+    console.error("Get team error:", error);
+    res.status(500).json({
+      error: error.message,
+    });
+  }
+};
+
 module.exports = {
   createTeam,
   getUserTeams,
   addTeamMember,
   getTeamMembers,
   removeTeamMember,
+  getTeam,
 };

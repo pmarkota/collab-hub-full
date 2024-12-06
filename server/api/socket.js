@@ -16,15 +16,35 @@ const initializeSocket = (server) => {
       credentials: true,
     },
     transports: ["websocket", "polling"],
-    pingTimeout: 30000,
-    pingInterval: 10000,
-    connectTimeout: 30000,
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    connectTimeout: 60000,
     allowEIO3: true,
     maxHttpBufferSize: 1e8,
   });
 
   io.engine.on("connection_error", (err) => {
-    console.log("[Socket] Connection error:", err);
+    console.error("[Socket] Connection error:", err);
+  });
+
+  io.engine.on("connect_timeout", () => {
+    console.error("[Socket] Connection timeout");
+  });
+
+  io.on("reconnect", (attemptNumber) => {
+    console.log(`[Socket] Reconnected after ${attemptNumber} attempts`);
+  });
+
+  io.on("reconnect_attempt", () => {
+    console.log("[Socket] Attempting to reconnect...");
+  });
+
+  io.on("reconnect_error", (error) => {
+    console.error("[Socket] Reconnection error:", error);
+  });
+
+  io.on("reconnect_failed", () => {
+    console.error("[Socket] Failed to reconnect");
   });
 
   io.use(async (socket, next) => {
@@ -38,7 +58,6 @@ const initializeSocket = (server) => {
       }
 
       try {
-        // Verify token and extract userId
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
         if (!decoded || !decoded.userId) {
@@ -46,11 +65,9 @@ const initializeSocket = (server) => {
           return next(new Error("Invalid token"));
         }
 
-        // Store userId in socket object
         socket.userId = decoded.userId;
         console.log("[Socket] User authenticated:", socket.userId);
 
-        // Clean up existing connection if any
         const existingSocket = connectedUsers.get(socket.userId);
         if (existingSocket && existingSocket.id !== socket.id) {
           console.log(
@@ -74,7 +91,10 @@ const initializeSocket = (server) => {
   io.on("connection", (socket) => {
     console.log(`[Socket] User ${socket.userId} connected (${socket.id})`);
 
-    // Store user connection
+    socket.conn.on("packet", ({ type, data }) => {
+      if (type === "ping") console.log("[Socket] Ping received");
+    });
+
     connectedUsers.set(socket.userId, socket);
     console.log(`[Socket] Connected users: ${connectedUsers.size}`);
 
@@ -90,7 +110,6 @@ const initializeSocket = (server) => {
       }
     });
 
-    // Add ping/pong for connection health check
     socket.on("ping", () => {
       socket.emit("pong");
     });

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import api from "../../utils/api";
 import { getSocket, initializeSocket } from "../../utils/socket";
 import { toast } from "react-hot-toast";
-import TeamDetails from "./TeamDetails";
+import { useNavigate } from "react-router-dom";
 import {
   Users2,
   Plus,
@@ -16,9 +16,9 @@ import {
 } from "lucide-react";
 
 const TeamList = () => {
+  const navigate = useNavigate();
   const [teams, setTeams] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [selectedTeam, setSelectedTeam] = useState(null);
   const [error, setError] = useState(null);
 
   const fetchTeams = async () => {
@@ -48,40 +48,46 @@ const TeamList = () => {
 
     const handleTeamEvent = async (data) => {
       console.log("[TeamList] Team event received:", data);
-      const currentUserId = JSON.parse(localStorage.getItem("user")).id;
+      const currentUserId = JSON.parse(localStorage.getItem("user"))?.id;
+      if (!currentUserId) return;
 
-      if (data.type === "MEMBER_ADDED") {
-        if (data.isAdmin) {
-          toast.success(`Successfully added member to team: ${data.teamName}`);
-          setTeams((prevTeams) =>
-            prevTeams.map((team) =>
-              team.id === data.teamId
-                ? { ...team, memberCount: data.memberCount }
-                : team
-            )
-          );
-        } else if (currentUserId === data.userId) {
-          toast.success(`You've been added to team: ${data.teamName}`);
-          await fetchTeams(); // Refresh the entire list
+      try {
+        if (data.type === "MEMBER_ADDED") {
+          if (data.isAdmin) {
+            toast.success(
+              `Successfully added member to team: ${data.teamName}`
+            );
+            setTeams((prevTeams) =>
+              prevTeams.map((team) =>
+                team.id === data.teamId
+                  ? { ...team, memberCount: data.memberCount }
+                  : team
+              )
+            );
+          } else if (currentUserId === data.userId) {
+            toast.success(`You've been added to team: ${data.teamName}`);
+            const response = await api.get("/teams");
+            setTeams(response.data || []);
+          }
+        } else if (data.type === "MEMBER_REMOVED") {
+          if (data.isAdmin) {
+            toast.success("Member removed successfully");
+            setTeams((prevTeams) =>
+              prevTeams.map((team) =>
+                team.id === data.teamId
+                  ? { ...team, memberCount: data.memberCount }
+                  : team
+              )
+            );
+          } else if (currentUserId === data.userId) {
+            toast.error(`You've been removed from team: ${data.teamName}`);
+            setTeams((prevTeams) =>
+              prevTeams.filter((team) => team.id !== data.teamId)
+            );
+          }
         }
-      } else if (data.type === "MEMBER_REMOVED") {
-        if (data.isAdmin) {
-          toast.success(
-            `Successfully removed member from team: ${data.teamName}`
-          );
-          setTeams((prevTeams) =>
-            prevTeams.map((team) =>
-              team.id === data.teamId
-                ? { ...team, memberCount: data.memberCount }
-                : team
-            )
-          );
-        } else if (currentUserId === data.userId) {
-          toast.error(`You've been removed from team: ${data.teamName}`);
-          setTeams((prevTeams) =>
-            prevTeams.filter((team) => team.id !== data.teamId)
-          );
-        }
+      } catch (err) {
+        console.error("[TeamList] Error handling team event:", err);
       }
     };
 
@@ -92,10 +98,8 @@ const TeamList = () => {
     };
   }, []);
 
-  // Add this function to handle team updates from TeamDetails
-  const handleTeamUpdate = () => {
-    console.log("Team update triggered, fetching fresh data");
-    fetchTeams();
+  const handleTeamClick = (team) => {
+    navigate(`/teams/${team.id}`);
   };
 
   if (isLoading) {
@@ -130,7 +134,7 @@ const TeamList = () => {
           </p>
         </div>
         <button
-          onClick={() => setSelectedTeam({ isNew: true })}
+          onClick={() => navigate("/teams/new")}
           className="flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors"
         >
           <Plus className="w-5 h-5" />
@@ -148,7 +152,7 @@ const TeamList = () => {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95 }}
               className="group cursor-pointer"
-              onClick={() => setSelectedTeam(team)}
+              onClick={() => handleTeamClick(team)}
             >
               <div className="relative h-full rounded-xl bg-gradient-to-br from-gray-800/50 to-gray-900/50 border border-gray-700/50 hover:border-blue-500/50 p-6 transition-all duration-300">
                 {/* Background Gradient */}
@@ -205,17 +209,6 @@ const TeamList = () => {
           ))}
         </AnimatePresence>
       </div>
-
-      {/* Team Details Modal */}
-      <AnimatePresence>
-        {selectedTeam && (
-          <TeamDetails
-            team={selectedTeam}
-            onClose={() => setSelectedTeam(null)}
-            onTeamUpdate={handleTeamUpdate}
-          />
-        )}
-      </AnimatePresence>
     </div>
   );
 };

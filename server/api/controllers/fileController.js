@@ -1,4 +1,27 @@
-const { supabase, supabaseAdminClient } = require("../config/supabase");
+const { supabase } = require("../config/supabase");
+
+console.log("Initializing file controller");
+
+const getTaskFiles = async (req, res, next) => {
+  try {
+    const { taskId } = req.params;
+    const { data: files, error } = await supabase
+      .from("files")
+      .select(
+        `
+        *,
+        uploaded_by_user:uploaded_by(username)
+      `
+      )
+      .eq("task_id", taskId)
+      .order("created_at", { ascending: false });
+
+    if (error) throw error;
+    return res.json({ data: files });
+  } catch (err) {
+    next(err);
+  }
+};
 
 const uploadFile = async (req, res) => {
   try {
@@ -17,109 +40,42 @@ const uploadFile = async (req, res) => {
       return res.status(400).json({ error: "No file field found" });
     }
 
-    // Check if bucket exists using admin client
-    const { data: buckets, error: bucketsError } =
-      await supabaseAdminClient.storage.listBuckets();
-
-    console.log("Buckets response:", { data: buckets, error: bucketsError });
-
-    if (bucketsError) {
-      console.error("Error listing buckets:", bucketsError);
-      return res.status(500).json({
-        error: "Failed to access storage system",
-        details: bucketsError.message,
-      });
-    }
-
-    console.log(
-      "Available buckets:",
-      buckets.map((b) => b.name)
-    );
-
-    let taskFilesBucket = buckets?.find((b) => b.name === "task-files");
-
-    if (!taskFilesBucket) {
-      console.log("Creating task-files bucket...");
-      const { data: newBucket, error: createError } =
-        await supabaseAdminClient.storage.createBucket("task-files", {
-          public: true,
-          fileSizeLimit: 52428800, // 50MB
-          allowedMimeTypes: ["application/pdf", "image/*", "text/*"],
-        });
-
-      if (createError) {
-        console.error("Error creating bucket:", createError);
-        return res.status(500).json({
-          error: "Failed to create storage bucket",
-          details: createError.message,
-        });
-      }
-
-      console.log("Bucket created successfully:", newBucket);
-      taskFilesBucket = newBucket;
-    }
-
-    // Try to list files in the bucket to verify access
-    const { data: files, error: filesError } = await supabase.storage
-      .from("task-files")
-      .list();
-
-    console.log("Files list response:", { data: files, error: filesError });
-
-    if (filesError) {
-      console.error("Error accessing bucket:", filesError);
-      return res.status(500).json({
-        error: "Failed to access storage bucket",
-        details: filesError.message,
-      });
-    }
-
     const { taskId } = req.params;
     const uploadedFile = req.files.file;
     const userId = req.user.id;
 
-    console.log("File details:", {
-      name: uploadedFile.name,
-      size: uploadedFile.size,
-      mimetype: uploadedFile.mimetype,
-      taskId,
-      userId,
-    });
-
-    // Check if user has access to the task
-    console.log("Checking task existence...");
-    const { data: task } = await supabase
+    // Get task details to verify access
+    const { data: task, error: taskError } = await supabase
       .from("tasks")
       .select("team_id")
       .eq("id", taskId)
       .single();
 
-    if (!task) {
-      console.log("Task not found:", taskId);
+    if (taskError || !task) {
+      console.error("Task not found:", taskError);
       return res.status(404).json({ error: "Task not found" });
     }
 
     // Check team membership
-    console.log("Checking team membership...");
-    const { data: teamMember } = await supabase
+    const { data: teamMember, error: memberError } = await supabase
       .from("team_members")
       .select()
       .eq("team_id", task.team_id)
       .eq("user_id", userId)
       .single();
 
-    if (!teamMember) {
+    if (memberError || !teamMember) {
+      console.error("Team membership check failed:", memberError);
       return res.status(403).json({ error: "Access denied" });
     }
 
-    // Create a unique filename to prevent collisions
+    // Generate unique filename
     const timestamp = Date.now();
-    const uniqueFilename = `${timestamp}-${uploadedFile.name}`;
-    const filePath = `${taskId}/${uniqueFilename}`;
+    const fileName = `${timestamp}-${uploadedFile.name}`;
+    const filePath = `${taskId}/${fileName}`;
 
-    // Upload to Supabase Storage using admin client
-    console.log("Uploading to Supabase storage...");
-    const { data, error } = await supabaseAdminClient.storage
+    // Upload to Supabase storage
+    const { data: storageData, error: storageError } = await supabase.storage
       .from("task-files")
       .upload(filePath, uploadedFile.data, {
         contentType: uploadedFile.mimetype,
@@ -127,47 +83,51 @@ const uploadFile = async (req, res) => {
         upsert: false,
       });
 
-    if (error) {
-      console.error("Supabase storage upload error:", error);
-      throw error;
+    if (storageError) {
+      console.error("Storage upload error:", storageError);
+      return res.status(500).json({
+        error: "Failed to upload file",
+        details: storageError.message,
+      });
     }
 
-    // Get public URL using admin client
-    const { data: publicUrl } = supabaseAdminClient.storage
+    // Get public URL
+    const { data: urlData } = await supabase.storage
       .from("task-files")
       .getPublicUrl(filePath);
 
-    console.log("File uploaded successfully, public URL:", publicUrl);
-
-    // Store metadata in files table
-    const { data: fileRecord, error: dbError } = await supabaseAdminClient
+    // Create file record in database
+    const { data: fileRecord, error: dbError } = await supabase
       .from("files")
-      .insert({
-        file_name: uploadedFile.name,
-        file_url: publicUrl.publicUrl,
-        task_id: taskId,
-        uploaded_by: userId,
-      })
+      .insert([
+        {
+          task_id: taskId,
+          file_name: fileName,
+          file_url: urlData.publicUrl,
+          uploaded_by: userId,
+          mime_type: uploadedFile.mimetype,
+          size: uploadedFile.size,
+        },
+      ])
       .select()
       .single();
 
     if (dbError) {
-      console.error("Database error:", dbError);
-      throw dbError;
+      console.error("Database insert error:", dbError);
+      return res.status(500).json({
+        error: "Failed to save file record",
+        details: dbError.message,
+      });
     }
 
-    console.log("File record created:", fileRecord);
-
-    res.status(201).json({
-      message: "File uploaded successfully",
+    res.json({
       data: fileRecord,
+      message: "File uploaded successfully",
     });
   } catch (error) {
     console.error("File upload error:", error);
-    console.error("Error stack:", error.stack);
     res.status(500).json({
-      error: error.message || "Failed to upload file",
-      details: process.env.NODE_ENV === "development" ? error.stack : undefined,
+      error: error.message,
     });
   }
 };
@@ -178,7 +138,7 @@ const downloadFile = async (req, res) => {
     const userId = req.user.id;
 
     // Get file metadata
-    const { data: file } = await supabase
+    const { data: file, error: fileError } = await supabase
       .from("files")
       .select(
         `
@@ -191,26 +151,35 @@ const downloadFile = async (req, res) => {
       .eq("id", fileId)
       .single();
 
-    if (!file) {
+    if (fileError || !file) {
       return res.status(404).json({ error: "File not found" });
     }
 
     // Check team membership
-    const { data: teamMember } = await supabase
+    const { data: teamMember, error: memberError } = await supabase
       .from("team_members")
       .select()
       .eq("team_id", file.task.team_id)
       .eq("user_id", userId)
       .single();
 
-    if (!teamMember) {
+    if (memberError || !teamMember) {
       return res.status(403).json({ error: "Access denied" });
+    }
+
+    // Get download URL
+    const { data: urlData, error: urlError } = await supabase.storage
+      .from("task-files")
+      .createSignedUrl(`${file.task_id}/${file.file_name}`, 60);
+
+    if (urlError) {
+      throw urlError;
     }
 
     res.json({
       data: {
         ...file,
-        download_url: file.file_url,
+        downloadUrl: urlData.signedUrl,
       },
     });
   } catch (error) {
@@ -286,66 +255,13 @@ const deleteFile = async (req, res) => {
   }
 };
 
-const getTaskFiles = async (req, res) => {
-  try {
-    const { taskId } = req.params;
-    const userId = req.user.id;
-
-    // Get task to check team membership
-    const { data: task } = await supabase
-      .from("tasks")
-      .select("team_id")
-      .eq("id", taskId)
-      .single();
-
-    if (!task) {
-      return res.status(404).json({ error: "Task not found" });
-    }
-
-    // Check team membership
-    const { data: teamMember } = await supabase
-      .from("team_members")
-      .select()
-      .eq("team_id", task.team_id)
-      .eq("user_id", userId)
-      .single();
-
-    if (!teamMember) {
-      return res.status(403).json({ error: "Access denied" });
-    }
-
-    // Get files with uploader information
-    const { data: files, error } = await supabase
-      .from("files")
-      .select(
-        `
-        *,
-        uploader:users!files_uploaded_by_fkey (
-          id,
-          username,
-          avatar_url
-        )
-      `
-      )
-      .eq("task_id", taskId)
-      .order("created_at", { ascending: false });
-
-    if (error) throw error;
-
-    res.json({
-      data: files,
-    });
-  } catch (error) {
-    console.error("Get task files error:", error);
-    res.status(500).json({
-      error: error.message,
-    });
-  }
-};
-
-module.exports = {
+const controller = {
+  getTaskFiles,
   uploadFile,
   downloadFile,
   deleteFile,
-  getTaskFiles,
 };
+
+console.log("Exporting file controller:", Object.keys(controller));
+
+module.exports = controller;

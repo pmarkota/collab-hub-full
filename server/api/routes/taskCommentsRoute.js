@@ -8,10 +8,8 @@ const {
 
 router.use(authenticateToken);
 
-// Get task comments
-router.get("/tasks/:taskId/comments", getTaskComments);
-
-// Create comment
-router.post("/tasks/:taskId/comments", createComment);
+// Get task comments - remove /tasks prefix since we'll mount under /tasks
+router.get("/:taskId/comments", getTaskComments);
+router.post("/:taskId/comments", createComment);
 
 module.exports = router;
